@@ -1,12 +1,12 @@
 """
 Test Metrics Module
 
-Tests for fitness functions (BLEU, COMET).
+Tests for fitness functions (BLEU).
 """
 
 import pytest
-
-from src.utils.metrics import BLEUFitness, compute_bleu
+import torch
+from src.utils.metrics import BLEUFitness, create_default_fitness
 
 
 class TestBLEUFitness:
@@ -21,7 +21,9 @@ class TestBLEUFitness:
         
         score = fitness(predictions, references)
         
-        assert score == 1.0  # Perfect match = 100 BLEU / 100
+        # sacrebleu score is typically 100.0 for perfect match, 
+        # but our wrapper divides by 100.0
+        assert score == pytest.approx(1.0)
     
     def test_no_match(self):
         """Test BLEU score for completely different strings."""
@@ -45,14 +47,14 @@ class TestBLEUFitness:
         
         assert 0.0 < score < 1.0  # Should be partial
     
-    def test_compute_bleu_convenience(self):
-        """Test convenience function."""
-        predictions = ["Hello world"]
-        references = ["Hello world"]
+    def test_create_default_fitness(self):
+        """Test the factory function."""
+        fitness = create_default_fitness()
+        assert isinstance(fitness, BLEUFitness)
         
-        score = compute_bleu(predictions, references)
-        
-        assert score == 1.0
+        predictions = ["Hello"]
+        references = ["Hello"]
+        assert fitness(predictions, references) == pytest.approx(1.0)
 
 
 if __name__ == "__main__":

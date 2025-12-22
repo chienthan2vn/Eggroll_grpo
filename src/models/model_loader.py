@@ -46,7 +46,6 @@ def load_model_with_lora(
         model_path,
         torch_dtype=dtype,
         trust_remote_code=True,
-        use_fast=False,
     )
     
     # Configure LoRA
