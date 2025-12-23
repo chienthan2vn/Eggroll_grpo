@@ -1,14 +1,12 @@
 """
 Translation Dataset Module
 
-Handles loading and preprocessing of translation data.
+Handles loading of raw translation data.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
 import json
-import torch
 from torch.utils.data import Dataset, DataLoader, DistributedSampler
-from transformers import PreTrainedTokenizer
 
 
 class TranslationDataset(Dataset):
@@ -23,27 +21,13 @@ class TranslationDataset(Dataset):
     }
     """
     
-    def __init__(
-        self,
-        data_path: str,
-        tokenizer: PreTrainedTokenizer,
-        max_source_length: int = 256,
-        max_target_length: int = 256,
-    ):
+    def __init__(self, data_path: str):
         """
         Initialize dataset.
         
         Args:
-            data_path: Path to JSON file or directory.
-            tokenizer: Tokenizer for encoding text.
-            max_source_length: Maximum source sequence length.
-            max_target_length: Maximum target sequence length.
+            data_path: Path to JSON file.
         """
-        self.tokenizer = tokenizer
-        self.max_source_length = max_source_length
-        self.max_target_length = max_target_length
-        
-        # Load data
         self.data = self._load_data(data_path)
     
     def _load_data(self, data_path: str) -> List[Dict[str, str]]:
@@ -53,7 +37,6 @@ class TranslationDataset(Dataset):
         
         # Handle both list and dict formats
         if isinstance(data, dict):
-            # Assume it's a single example
             data = [data]
         
         return data
@@ -61,71 +44,44 @@ class TranslationDataset(Dataset):
     def __len__(self) -> int:
         return len(self.data)
     
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
+    def __getitem__(self, idx: int) -> Dict[str, str]:
         item = self.data[idx]
         
-        # Get source and target texts
-        source_text = item.get("src") or item.get("prompt", "")
-        target_text = item.get("answer", "")
-        
-        # Tokenize source
-        source_encoding = self.tokenizer(
-            source_text,
-            max_length=self.max_source_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-        
-        # Tokenize target
-        target_encoding = self.tokenizer(
-            target_text,
-            max_length=self.max_target_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-        
+        src = item.get("src", "")
+        prompt = item.get("prompt", "")
+        if not prompt and src:
+            prompt = src
+            
         return {
-            "input_ids": source_encoding["input_ids"].squeeze(0),
-            "attention_mask": source_encoding["attention_mask"].squeeze(0),
-            "labels": target_encoding["input_ids"].squeeze(0),
-            "decoder_attention_mask": target_encoding["attention_mask"].squeeze(0),
-            # Keep raw text for metric computation
-            "source_text": source_text,
-            "target_text": target_text,
+            "prompt": prompt,
+            "src": src,
+            "answer": item.get("answer", "")
         }
 
 
-def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+def collate_fn(batch: List[Dict[str, str]]) -> Dict[str, List[str]]:
     """
     Collate function for DataLoader.
     
-    Handles both tensor and string fields.
+    Returns a dictionary of lists.
     """
-    result = {}
+    result = {
+        "prompt": [],
+        "src": [],
+        "answer": []
+    }
     
-    # Tensor fields
-    tensor_keys = ["input_ids", "attention_mask", "labels", "decoder_attention_mask"]
-    for key in tensor_keys:
-        if key in batch[0]:
-            result[key] = torch.stack([item[key] for item in batch])
-    
-    # String fields
-    string_keys = ["source_text", "target_text"]
-    for key in string_keys:
-        if key in batch[0]:
-            result[key] = [item[key] for item in batch]
-    
+    for item in batch:
+        result["prompt"].append(item["prompt"])
+        result["src"].append(item["src"])
+        result["answer"].append(item["answer"])
+        
     return result
 
 
 def create_dataloader(
     data_path: str,
-    tokenizer: PreTrainedTokenizer,
     batch_size: int = 8,
-    max_source_length: int = 256,
-    max_target_length: int = 256,
     shuffle: bool = True,
     num_workers: int = 4,
     distributed: bool = False,
@@ -137,10 +93,7 @@ def create_dataloader(
     
     Args:
         data_path: Path to JSON data file.
-        tokenizer: Tokenizer for encoding.
         batch_size: Batch size per GPU.
-        max_source_length: Maximum source length.
-        max_target_length: Maximum target length.
         shuffle: Whether to shuffle data.
         num_workers: Number of data loading workers.
         distributed: Whether using distributed training.
@@ -150,12 +103,7 @@ def create_dataloader(
     Returns:
         DataLoader instance.
     """
-    dataset = TranslationDataset(
-        data_path=data_path,
-        tokenizer=tokenizer,
-        max_source_length=max_source_length,
-        max_target_length=max_target_length,
-    )
+    dataset = TranslationDataset(data_path=data_path)
     
     if distributed:
         sampler = DistributedSampler(
