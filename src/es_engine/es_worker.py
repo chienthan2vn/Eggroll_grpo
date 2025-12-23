@@ -184,16 +184,30 @@ class ESWorker:
         total_fitness = 0.0
         num_batches = 0
         
+        if "tokenizer" not in fitness_kwargs:
+            raise ValueError("Tokenizer required for evaluation but not found in kwargs")
+        
+        tokenizer = fitness_kwargs["tokenizer"]
+        max_source_len = fitness_kwargs.get("max_source_length", 256)
+        
         with torch.no_grad():
             for batch in dataloader:
-                # Move batch to device
-                batch = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
-                        for k, v in batch.items()}
+                # Tokenize inputs on the fly
+                inputs = tokenizer(
+                    batch["prompt"],
+                    max_length=max_source_len,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt"
+                )
+                
+                input_ids = inputs["input_ids"].to(self.device)
+                attention_mask = inputs["attention_mask"].to(self.device)
                 
                 # Generate outputs
                 outputs = self.model.generate(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
                     max_new_tokens=fitness_kwargs.get("max_new_tokens", 128),
                     do_sample=False,  # Greedy for evaluation
                 )
@@ -201,8 +215,8 @@ class ESWorker:
                 # Compute fitness
                 fitness = self.fitness_fn(
                     predictions=outputs,
-                    references=batch.get("labels"),
-                    tokenizer=fitness_kwargs.get("tokenizer"),
+                    references=batch.get("answer"), # Use 'answer' field
+                    tokenizer=tokenizer,
                     **fitness_kwargs,
                 )
                 total_fitness += fitness

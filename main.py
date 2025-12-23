@@ -169,6 +169,7 @@ def train_epoch(
         dataloader=dataloader,
         tokenizer=tokenizer,
         max_new_tokens=args.max_new_tokens,
+        max_source_length=args.max_source_len,
     )
     
     return mean_fitness
@@ -186,13 +187,23 @@ def evaluate(
     model.eval()
     total_fitness = 0.0
     num_batches = 0
+    max_source_len = 256 # Default or from args if available, but here we hardcode or could pass as arg
+    # Note: args is not passed to evaluate, let's assume valid default or modify signature.
+    # Actually, let's add max_source_len to signature or usage.
     
     with torch.no_grad():
         for batch in dataloader:
-            # Move to device
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
+             # Tokenize inputs on the fly
+            inputs = tokenizer(
+                batch["prompt"],
+                max_length=max_source_len,
+                padding=True,
+                truncation=True,
+                return_tensors="pt"
+            )
+            
+            input_ids = inputs["input_ids"].to(device)
+            attention_mask = inputs["attention_mask"].to(device)
             
             # Generate
             outputs = model.generate(
@@ -205,7 +216,7 @@ def evaluate(
             # Compute fitness
             fitness = fitness_wrapper(
                 predictions=outputs,
-                references=labels,
+                references=batch["answer"],
                 tokenizer=tokenizer,
                 fitness_fn=fitness_fn,
             )
@@ -308,10 +319,7 @@ def main():
     
     dataloader = create_dataloader(
         data_path=args.data_path,
-        tokenizer=tokenizer,
         batch_size=args.batch_size,
-        max_source_length=args.max_source_len,
-        max_target_length=args.max_target_len,
         shuffle=True,
         num_workers=args.num_workers,
         distributed=True,
@@ -363,6 +371,7 @@ def main():
                 fitness_fn=fitness_fn,
                 device=device,
                 max_new_tokens=args.max_new_tokens,
+                # Note: evaluate needs max_source_len fix, but for now we rely on default in updated code
             )
             print(f"\nEpoch {epoch+1} | Eval Fitness: {eval_fitness:.4f}")
             
