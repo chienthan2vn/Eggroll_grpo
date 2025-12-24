@@ -5,49 +5,11 @@ Handles distributed evaluation of perturbations across multiple GPUs.
 Uses torch.distributed for communication.
 """
 
-from typing import Dict, List, Optional, Callable, Any
+from typing import Callable
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from dataclasses import dataclass
-import os
 
 from .es_core import ESOptimizer, ESConfig
-
-
-@dataclass
-class WorkerConfig:
-    """Configuration for ES worker."""
-    world_size: int = 8  # Number of GPUs
-    master_addr: str = "localhost"
-    master_port: str = "12355"
-    backend: str = "nccl"  # Use NCCL for GPU communication
-
-
-def setup_distributed(rank: int, config: WorkerConfig) -> None:
-    """
-    Initialize distributed process group.
-    
-    Args:
-        rank: Process rank (0 to world_size - 1).
-        config: Worker configuration.
-    """
-    os.environ["MASTER_ADDR"] = config.master_addr
-    os.environ["MASTER_PORT"] = config.master_port
-    
-    dist.init_process_group(
-        backend=config.backend,
-        rank=rank,
-        world_size=config.world_size,
-    )
-    
-    # Set device for this process
-    torch.cuda.set_device(rank)
-
-
-def cleanup_distributed() -> None:
-    """Clean up distributed process group."""
-    dist.destroy_process_group()
 
 
 class ESWorker:
@@ -180,6 +142,8 @@ class ESWorker:
         Returns:
             Fitness score.
         """
+        from src.utils import tokenize_and_generate
+        
         self.model.eval()
         total_fitness = 0.0
         num_batches = 0
@@ -189,35 +153,24 @@ class ESWorker:
         
         tokenizer = fitness_kwargs["tokenizer"]
         max_source_len = fitness_kwargs.get("max_source_length", 256)
+        max_new_tokens = fitness_kwargs.get("max_new_tokens", 128)
         
         with torch.no_grad():
             for batch in dataloader:
-                # Tokenize inputs on the fly
-                inputs = tokenizer(
-                    batch["prompt"],
-                    max_length=max_source_len,
-                    padding=True,
-                    truncation=True,
-                    return_tensors="pt"
+                # Use shared tokenization utility
+                outputs = tokenize_and_generate(
+                    model=self.model,
+                    tokenizer=tokenizer,
+                    prompts=batch["prompt"],
+                    device=self.device,
+                    max_source_length=max_source_len,
+                    max_new_tokens=max_new_tokens,
                 )
-                
-                input_ids = inputs["input_ids"].to(self.device)
-                attention_mask = inputs["attention_mask"].to(self.device)
-                
-                # Generate outputs
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    outputs = self.model.generate(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        max_new_tokens=fitness_kwargs.get("max_new_tokens", 128),
-                        do_sample=False,  # Greedy for evaluation
-                    )
                 
                 # Compute fitness
                 fitness = self.fitness_fn(
                     predictions=outputs,
-                    references=batch.get("answer"), # Use 'answer' field
-                    tokenizer=tokenizer,
+                    references=batch.get("answer"),
                     **fitness_kwargs,
                 )
                 total_fitness += fitness
@@ -269,50 +222,3 @@ class ESWorker:
         mean_fitness = self.es_optimizer.step(all_fitnesses, pos_noise, neg_noise)
         
         return mean_fitness
-
-
-def run_worker(
-    rank: int,
-    world_size: int,
-    model_factory: Callable[[], torch.nn.Module],
-    es_config: ESConfig,
-    fitness_fn: Callable,
-    train_fn: Callable,
-    **train_kwargs,
-) -> None:
-    """
-    Entry point for each distributed worker.
-    
-    Args:
-        rank: Worker rank.
-        world_size: Total workers.
-        model_factory: Function that creates the model.
-        es_config: ES configuration.
-        fitness_fn: Fitness evaluation function.
-        train_fn: Main training function to run.
-        **train_kwargs: Additional training arguments.
-    """
-    # Setup
-    worker_config = WorkerConfig(world_size=world_size)
-    setup_distributed(rank, worker_config)
-    device = torch.device(f"cuda:{rank}")
-    
-    try:
-        # Create model
-        model = model_factory()
-        model = model.to(device)
-        
-        # Get LoRA parameters
-        lora_params = [p for n, p in model.named_parameters() if "lora_" in n and p.requires_grad]
-        
-        # Create ES optimizer
-        es_optimizer = ESOptimizer(lora_params, es_config, device)
-        
-        # Create worker
-        worker = ESWorker(rank, world_size, model, es_optimizer, fitness_fn, device)
-        
-        # Run training
-        train_fn(worker, **train_kwargs)
-        
-    finally:
-        cleanup_distributed()

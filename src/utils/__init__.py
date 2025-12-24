@@ -1,4 +1,5 @@
 # Utils module
-from .metrics import compute_bleu, compute_comet, FitnessFunction, BLEUFitness, COMETFitness
+from .metrics import FitnessFunction, BLEUFitness, create_default_fitness
+from .tokenization import tokenize_and_generate
 
-__all__ = ["compute_bleu", "compute_comet", "FitnessFunction", "BLEUFitness", "COMETFitness"]
+__all__ = ["FitnessFunction", "BLEUFitness", "create_default_fitness", "tokenize_and_generate"]

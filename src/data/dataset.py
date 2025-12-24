@@ -38,8 +38,8 @@ def get_dataset(data_path: str) -> Tuple[Any, Any]:
             "answer": tgt_text,
         }
         
-        # User defined eval paths (currently empty placeholders)
-        eval_src_path = "" 
+        # Eval data paths (can be extended as parameters if needed)
+        eval_src_path = ""
         eval_tgt_path = ""
         
         eval_src = []
@@ -82,18 +82,11 @@ def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     
     Returns a dictionary of lists.
     """
-    result = {
-        "prompt": [],
-        "src": [],
-        "answer": []
+    return {
+        "prompt": [item.get("prompt", "") for item in batch],
+        "src": [item.get("src", "") for item in batch],
+        "answer": [item.get("answer", "") for item in batch]
     }
-    
-    for item in batch:
-        result["prompt"].append(item.get("prompt", ""))
-        result["src"].append(item.get("src", ""))
-        result["answer"].append(item.get("answer", ""))
-        
-    return result
 
 
 def create_dataloader(

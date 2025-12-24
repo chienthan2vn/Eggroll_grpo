@@ -25,9 +25,8 @@ from tqdm import tqdm
 from src.models import load_model_with_lora
 from src.es_engine import ESOptimizer, ESWorker
 from src.es_engine.es_core import ESConfig
-from src.es_engine.es_worker import setup_distributed, cleanup_distributed
 from src.data import get_dataset, create_dataloader
-from src.utils import BLEUFitness, create_default_fitness
+from src.utils import create_default_fitness
 
 # Optional: Weights & Biases logging
 try:
@@ -182,35 +181,25 @@ def evaluate(
     fitness_fn,
     device: torch.device,
     max_new_tokens: int = 128,
+    max_source_len: int = 256,
 ) -> float:
     """Evaluate model on validation data."""
+    from src.utils import tokenize_and_generate
+    
     model.eval()
     total_fitness = 0.0
     num_batches = 0
-    max_source_len = 256 # Default or from args if available, but here we hardcode or could pass as arg
-    # Note: args is not passed to evaluate, let's assume valid default or modify signature.
-    # Actually, let's add max_source_len to signature or usage.
     
     with torch.no_grad():
         for batch in dataloader:
-             # Tokenize inputs on the fly
-            inputs = tokenizer(
-                batch["prompt"],
-                max_length=max_source_len,
-                padding=True,
-                truncation=True,
-                return_tensors="pt"
-            )
-            
-            input_ids = inputs["input_ids"].to(device)
-            attention_mask = inputs["attention_mask"].to(device)
-            
-            # Generate
-            outputs = model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
+            # Use shared tokenization utility
+            outputs = tokenize_and_generate(
+                model=model,
+                tokenizer=tokenizer,
+                prompts=batch["prompt"],
+                device=device,
+                max_source_length=max_source_len,
                 max_new_tokens=max_new_tokens,
-                do_sample=False,
             )
             
             # Compute fitness
@@ -390,6 +379,7 @@ def main():
                     fitness_fn=fitness_fn,
                     device=device,
                     max_new_tokens=args.max_new_tokens,
+                    max_source_len=args.max_source_len,
                 )
                 print(f"\nEpoch {epoch+1} | Eval Fitness: {eval_fitness:.4f}")
                 

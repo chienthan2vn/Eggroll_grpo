@@ -69,35 +69,3 @@ def load_model_with_lora(
     model.print_trainable_parameters()
     
     return model, tokenizer
-
-
-def get_lora_parameters(model: PreTrainedModel) -> List[torch.nn.Parameter]:
-    """
-    Get only the LoRA parameters from the model.
-    
-    Args:
-        model: Model with LoRA adapters.
-    
-    Returns:
-        List of LoRA parameters.
-    """
-    lora_params = []
-    for name, param in model.named_parameters():
-        if "lora_" in name:
-            lora_params.append(param)
-    return lora_params
-
-
-def count_parameters(model: PreTrainedModel) -> Tuple[int, int]:
-    """
-    Count trainable and total parameters.
-    
-    Args:
-        model: The model to count parameters for.
-    
-    Returns:
-        Tuple of (trainable_params, total_params).
-    """
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
-    return trainable, total

@@ -50,11 +50,6 @@ class BLEUFitness(FitnessFunction):
     between predictions and references.
     """
     
-    def __init__(self):
-        """
-        Initialize BLEU fitness.
-        """
-    
     def __call__(
         self,
         predictions: Union[List[str], torch.Tensor],
@@ -68,14 +63,11 @@ class BLEUFitness(FitnessFunction):
         refs = [[r] for r in references]
         
         # Compute BLEU
-        bleu = sacrebleu.corpus_bleu(
-            predictions,
-            refs,
-        )
+        bleu = sacrebleu.corpus_bleu(predictions, refs)
         
         return bleu.score / 100.0  # Normalize to [0, 1]
 
-# Default fitness function for training
+
 def create_default_fitness() -> FitnessFunction:
     """Create the default fitness function (BLEU)."""
     return BLEUFitness()
