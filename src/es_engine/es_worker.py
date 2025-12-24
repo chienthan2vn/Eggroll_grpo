@@ -205,12 +205,13 @@ class ESWorker:
                 attention_mask = inputs["attention_mask"].to(self.device)
                 
                 # Generate outputs
-                outputs = self.model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=fitness_kwargs.get("max_new_tokens", 128),
-                    do_sample=False,  # Greedy for evaluation
-                )
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    outputs = self.model.generate(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=fitness_kwargs.get("max_new_tokens", 128),
+                        do_sample=False,  # Greedy for evaluation
+                    )
                 
                 # Compute fitness
                 fitness = self.fitness_fn(
