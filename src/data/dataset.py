@@ -1,65 +1,82 @@
 """
 Translation Dataset Module
 
-Handles loading of raw translation data.
+Handles loading of translation data using HuggingFace Datasets.
 """
 
-from typing import Dict, List, Any
+import os
 import json
-from torch.utils.data import Dataset, DataLoader, DistributedSampler
+from typing import Tuple, Dict, List, Any
+from datasets import Dataset, load_from_disk
+from torch.utils.data import DataLoader, DistributedSampler
 
 
-class TranslationDataset(Dataset):
+def get_dataset(data_path: str) -> Tuple[Any, Any]:
     """
-    Dataset for Vietnamese-Korean translation.
+    Load dataset from JSON or disk.
     
-    Expected JSON format:
-    {
-        "src": "Câu tiếng Việt",
-        "prompt": "Câu tiếng Việt (optional, same as src)",
-        "answer": "Câu tiếng Hàn"
-    }
-    """
-    
-    def __init__(self, data_path: str):
-        """
-        Initialize dataset.
+    Args:
+        data_path: Path to data file or directory.
         
-        Args:
-            data_path: Path to JSON file.
-        """
-        self.data = self._load_data(data_path)
-    
-    def _load_data(self, data_path: str) -> List[Dict[str, str]]:
-        """Load data from JSON file."""
+    Returns:
+        Tuple of (train_dataset, test_dataset)
+    """
+    try:
+        # Try loading as JSON first
+        src_text = []
+        tgt_text = []
+        
         with open(data_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        # Handle both list and dict formats
-        if isinstance(data, dict):
-            data = [data]
-        
-        return data
-    
-    def __len__(self) -> int:
-        return len(self.data)
-    
-    def __getitem__(self, idx: int) -> Dict[str, str]:
-        item = self.data[idx]
-        
-        src = item.get("src", "")
-        prompt = item.get("prompt", "")
-        if not prompt and src:
-            prompt = src
+            file_content = json.load(f)
             
-        return {
-            "prompt": prompt,
-            "src": src,
-            "answer": item.get("answer", "")
+        src_text = [text.strip() for text in file_content.get('prompt', [])]
+        tgt_text = [text.strip() for text in file_content.get('chosen', [])]
+        
+        train_data = {
+            "prompt": src_text,
+            "src": src_text,
+            "answer": tgt_text,
+        }
+        
+        # User defined eval paths (currently empty placeholders)
+        eval_src_path = "" 
+        eval_tgt_path = ""
+        
+        eval_src = []
+        eval_tgt = []
+        
+        # Guard logic: Only open files if paths are not empty string
+        if eval_src_path and os.path.exists(eval_src_path):
+            with open(eval_src_path, "r", encoding="utf-8") as f:
+                eval_src = [text.strip() for text in f.readlines()]
+                
+        if eval_tgt_path and os.path.exists(eval_tgt_path):
+            with open(eval_tgt_path, "r", encoding="utf-8") as f:
+                eval_tgt = [text.strip() for text in f.readlines()]
+        
+        eval_data = {
+            "prompt": eval_src,
+            "src": eval_src,
+            "answer": eval_tgt,
         }
 
+        train_dataset = Dataset.from_dict(train_data)
+        test_dataset = Dataset.from_dict(eval_data)
+        
+    except Exception as e:
+        print(f"Failed to load as JSON (error: {e}). Trying load_from_disk...")
+        try:
+            loaded_dataset_dict = load_from_disk(data_path)
+            # Handle case where keys might differ or dataset structure varies
+            train_dataset = loaded_dataset_dict.get("train")
+            test_dataset = loaded_dataset_dict.get("test")
+        except Exception as disk_error:
+            raise ValueError(f"Could not load dataset from {data_path} as JSON or disk. Errors: JSON({e}), Disk({disk_error})")
 
-def collate_fn(batch: List[Dict[str, str]]) -> Dict[str, List[str]]:
+    return train_dataset, test_dataset
+
+
+def collate_fn(batch: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     """
     Collate function for DataLoader.
     
@@ -72,15 +89,15 @@ def collate_fn(batch: List[Dict[str, str]]) -> Dict[str, List[str]]:
     }
     
     for item in batch:
-        result["prompt"].append(item["prompt"])
-        result["src"].append(item["src"])
-        result["answer"].append(item["answer"])
+        result["prompt"].append(item.get("prompt", ""))
+        result["src"].append(item.get("src", ""))
+        result["answer"].append(item.get("answer", ""))
         
     return result
 
 
 def create_dataloader(
-    data_path: str,
+    dataset: Any,
     batch_size: int = 8,
     shuffle: bool = True,
     num_workers: int = 4,
@@ -89,10 +106,10 @@ def create_dataloader(
     world_size: int = 1,
 ) -> DataLoader:
     """
-    Create a DataLoader for translation data.
+    Create a DataLoader for a HF Dataset.
     
     Args:
-        data_path: Path to JSON data file.
+        dataset: HuggingFace Dataset object.
         batch_size: Batch size per GPU.
         shuffle: Whether to shuffle data.
         num_workers: Number of data loading workers.
@@ -103,16 +120,14 @@ def create_dataloader(
     Returns:
         DataLoader instance.
     """
-    dataset = TranslationDataset(data_path=data_path)
-    
     if distributed:
         sampler = DistributedSampler(
             dataset,
             num_replicas=world_size,
             rank=rank,
-            shuffle=shuffle,
+            shuffle=shuffle, # DistributedSampler handles shuffling
         )
-        shuffle = False  # Sampler handles shuffling
+        shuffle = False 
     else:
         sampler = None
     

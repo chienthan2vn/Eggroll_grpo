@@ -26,7 +26,7 @@ from src.models import load_model_with_lora
 from src.es_engine import ESOptimizer, ESWorker
 from src.es_engine.es_core import ESConfig
 from src.es_engine.es_worker import setup_distributed, cleanup_distributed
-from src.data import TranslationDataset, create_dataloader
+from src.data import get_dataset, create_dataloader
 from src.utils import BLEUFitness, create_default_fitness
 
 # Optional: Weights & Biases logging
@@ -317,8 +317,12 @@ def main():
     if is_master:
         print("Loading data...")
     
-    dataloader = create_dataloader(
-        data_path=args.data_path,
+    # Load datasets
+    train_dataset, test_dataset = get_dataset(args.data_path)
+    
+    # Create dataloaders
+    train_dataloader = create_dataloader(
+        dataset=train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
@@ -326,6 +330,20 @@ def main():
         rank=rank,
         world_size=world_size,
     )
+    
+    # Only create test loader if test dataset exists
+    test_dataloader = None
+    if test_dataset is not None and len(test_dataset) > 0:
+        if is_master:
+             test_dataloader = create_dataloader(
+                dataset=test_dataset,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=args.num_workers,
+                distributed=False, # Eval on master only
+                rank=0,
+                world_size=1,
+             )
     
     # Broadcast initial weights
     if is_master:
@@ -345,7 +363,7 @@ def main():
         # Train
         mean_fitness = train_epoch(
             worker=worker,
-            dataloader=dataloader,
+            dataloader=train_dataloader,
             epoch=epoch,
             args=args,
             tokenizer=tokenizer,
@@ -364,28 +382,30 @@ def main():
         
         # Evaluation
         if (epoch + 1) % args.eval_every == 0 and is_master:
-            eval_fitness = evaluate(
-                model=model,
-                dataloader=dataloader,
-                tokenizer=tokenizer,
-                fitness_fn=fitness_fn,
-                device=device,
-                max_new_tokens=args.max_new_tokens,
-                # Note: evaluate needs max_source_len fix, but for now we rely on default in updated code
-            )
-            print(f"\nEpoch {epoch+1} | Eval Fitness: {eval_fitness:.4f}")
-            
-            if eval_fitness > best_fitness:
-                best_fitness = eval_fitness
-                # Save best model
-                model.save_pretrained(output_dir / "best_lora")
-                print(f"Saved best model (fitness: {best_fitness:.4f})")
-            
-            if args.wandb and WANDB_AVAILABLE:
-                wandb.log({
-                    "eval_fitness": eval_fitness,
-                    "best_fitness": best_fitness,
-                })
+            if test_dataloader is not None:
+                eval_fitness = evaluate(
+                    model=model,
+                    dataloader=test_dataloader,
+                    tokenizer=tokenizer,
+                    fitness_fn=fitness_fn,
+                    device=device,
+                    max_new_tokens=args.max_new_tokens,
+                )
+                print(f"\nEpoch {epoch+1} | Eval Fitness: {eval_fitness:.4f}")
+                
+                if eval_fitness > best_fitness:
+                    best_fitness = eval_fitness
+                    # Save best model
+                    model.save_pretrained(output_dir / "best_lora")
+                    print(f"Saved best model (fitness: {best_fitness:.4f})")
+                
+                if args.wandb and WANDB_AVAILABLE:
+                    wandb.log({
+                        "eval_fitness": eval_fitness,
+                        "best_fitness": best_fitness,
+                    })
+            else:
+                 print(f"\nEpoch {epoch+1} | Evaluation skipped (no test data)")
         
         # Save checkpoint
         if (epoch + 1) % args.save_every == 0 and is_master:

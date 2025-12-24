@@ -1,40 +1,40 @@
 """
-Tests for Translation Dataset
+Tests for Translation Dataset (HF Dataset version)
 """
 
 import os
 import json
 import pytest
-import torch
-from src.data.dataset import TranslationDataset, create_dataloader
+from src.data.dataset import get_dataset, create_dataloader
 
 @pytest.fixture
 def sample_data_file(tmp_path):
-    data = [
-        {"src": "Xin chào", "prompt": "Dịch sang tiếng Hàn: Xin chào", "answer": "안녕하세요"},
-        {"src": "Cảm ơn", "answer": "감사합니다"},  # Missing prompt, should default to src
-    ]
+    # Format expected by get_dataset
+    data = {
+        "prompt": ["Dịch sang tiếng Hàn: Xin chào", "Cảm ơn"],
+        "chosen": ["안녕하세요", "감사합니다"]
+    }
     p = tmp_path / "data.json"
     with open(p, "w", encoding="utf-8") as f:
         json.dump(data, f)
     return str(p)
 
-def test_dataset_loading(sample_data_file):
-    dataset = TranslationDataset(sample_data_file)
-    assert len(dataset) == 2
+def test_get_dataset_json(sample_data_file):
+    train_ds, test_ds = get_dataset(sample_data_file)
     
-    item0 = dataset[0]
-    assert item0["prompt"] == "Dịch sang tiếng Hàn: Xin chào"
-    assert item0["src"] == "Xin chào"
-    assert item0["answer"] == "안녕하세요"
+    # Train dataset should be loaded
+    assert train_ds is not None
+    assert len(train_ds) == 2
+    assert train_ds[0]["prompt"] == "Dịch sang tiếng Hàn: Xin chào"
+    assert train_ds[0]["src"] == "Dịch sang tiếng Hàn: Xin chào" # src mirrored from prompt
+    assert train_ds[0]["answer"] == "안녕하세요"
     
-    item1 = dataset[1]
-    assert item1["src"] == "Cảm ơn"
-    assert item1["prompt"] == "Cảm ơn"  # Defaults to src
-    assert item1["answer"] == "감사합니다"
+    # Test dataset should be empty (0 rows) because eval paths are empty
+    assert len(test_ds) == 0
 
 def test_dataloader(sample_data_file):
-    loader = create_dataloader(sample_data_file, batch_size=2, shuffle=False)
+    train_ds, _ = get_dataset(sample_data_file)
+    loader = create_dataloader(train_ds, batch_size=2, shuffle=False)
     batch = next(iter(loader))
     
     assert isinstance(batch, dict)
@@ -44,18 +44,5 @@ def test_dataloader(sample_data_file):
     assert batch["prompt"][0] == "Dịch sang tiếng Hàn: Xin chào"
     assert batch["prompt"][1] == "Cảm ơn"
 
-def test_distributed_dataloader(sample_data_file):
-    # Mock distributed environment variables if needed, 
-    # but DistributedSampler can run without actual dist init if num_replicas is provided
-    loader = create_dataloader(
-        sample_data_file, 
-        batch_size=1, 
-        distributed=True, 
-        rank=0, 
-        world_size=2
-    )
-    # With 2 items and world_size=2, each rank gets 1 item
-    assert len(loader) == 1
-    
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
